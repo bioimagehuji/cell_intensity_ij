@@ -12,6 +12,7 @@
 //         
 // Required plugins: https://imagej.net/plugins/morpholibj#installation
 
+GFP_CHANNEL = 3;
 debug_flag = false;
 
 // Choose folder
@@ -25,21 +26,73 @@ else {
 // Function similar to MorphoLibJ's Keep Largest Region, but it only keeps the largest region in each time-frame of the image with dims W*H*C*T.
 // This function is used to solve the problem when an image has dims W*H*1*T and "Keep Largest Region" keeps a 3D region instead of a series of 2D components.
 function keep_largest_region_in_each_frame() {
+	//waitForUser("before keep_largest_region_in_each_frame");
 	current_image_name = getTitle();
 	print("current_image_name " + current_image_name);
 	Stack.getDimensions(width, height, channels, slices, frames)
 	print("frames: " + frames);
 	run("Stack to Images");
+//	waitForUser("after stack to images " + getTitle());
 	for (frame_i=0; frame_i<frames; frame_i++) {
 		selectImage(current_image_name+"-000"+frame_i+1);
 		run("Keep Largest Region");
 		close(current_image_name+"-000"+frame_i+1);
 		rename(current_image_name+"-000"+frame_i+1);
 	}
+//	waitForUser("after for " + getTitle());
+//	wait(100);
 	run("Images to Stack", "title=mask ");
-	rename(current_image_name+"-largest");
+	selectImage("Stack");
+//	waitForUser("after images to stack " + getTitle());
+//	waitForUser("aaaa: " + getTitle());
+//	if (getTitle() != "Stack") {
+//		waitForUser("bbbb: " + getTitle());
+//	}
+	title = getTitle();
+//	if (title != "Stack") {
+//		waitForUser("cur image is not Stack: " + title);
+//	}
+	if (title == "Stack") {
+		rename(current_image_name+"-largest");
+	} 
+	else {
+		waitForUser("Erorr: cur image is not Stack: " + title);
+	}
+	
+//	getTitle();
 	selectImage(current_image_name+"-largest");
+	//waitForUser("after  keep_largest_region_in_each_frame");
 }
+
+function min_threshold_in_frames() {
+	//waitForUser("before min_threshold_3d");
+	min_threshold = 65536;
+	Stack.getDimensions(width, height, channels, slices, frames)
+	print("frames: " + frames);
+	for (frame_i=0; frame_i<frames; frame_i++) {
+		Stack.setFrame(frame_i);
+		Stack.setFrame(0);
+		setAutoThreshold("Otsu dark no-reset");
+		getThreshold(lower, upper);
+		//waitForUser("lower = " + lower);
+		min_threshold = minOf(lower, min_threshold);
+	}
+	//waitForUser("min_threshold = " + min_threshold);
+	return min_threshold;
+}
+
+
+function save_mask_montage(filename) {
+	selectImage("mask-largest");
+	run("Make Montage...", "columns=5 rows=1 scale=1");
+	save(filename);
+	if (debug_flag) {
+		run("Tile");
+		waitForUser("Verify the blob shapes in the montage.");
+	}
+	close("Montage");
+}
+
 
 // Initialize ImageJ
 run("Clear Results");
@@ -61,8 +114,8 @@ for (filename_i = 0; filename_i < filenames.length; filename_i++) {
 	if(endsWith(filename, ".tif")) {
 		open(folder + filename);
 		
-		run("Duplicate...", "duplicate channels=2");
-		rename("C2-" + filename);
+		run("Duplicate...", "duplicate channels=" + GFP_CHANNEL);
+		rename("C" + GFP_CHANNEL + "-" + filename);
 		run("Z Project...", "projection=[Max Intensity] all");
 		projected = "projected_" + filename;
 		rename(projected);
@@ -71,16 +124,21 @@ for (filename_i = 0; filename_i < filenames.length; filename_i++) {
 		save(folder + "results/"+ projected);
 		run("Duplicate...", "title=smooth duplicate");
 		run("Smooth", "stack");
-		setThreshold(200, 65535, "raw");
+		min_threshold = min_threshold_in_frames();
+		setThreshold(min_threshold, 65535, "raw");
 		run("Convert to Mask", "background=Dark create");
 		close("smooth");
 		rename("mask");
 		
 		keep_largest_region_in_each_frame(); // returns a mask-largest
 		
+		
 		selectImage("mask-largest");
 		save(folder + "results/"+ projected + "_mask.tif");
+		save_mask_montage(folder + "results/"+ projected + "_masks.png");
+		
 		// Find regions to measure
+		selectImage("mask-largest");
 		run("Analyze Particles...", "size=1-Infinity include add stack");
 		// Measure mean intensity
 		run("Clear Results");
@@ -99,16 +157,8 @@ for (filename_i = 0; filename_i < filenames.length; filename_i++) {
 		}
 		Table.update();
 		
-		if (debug_flag) {
-			run("Tile");
-			selectImage("mask-largest");
-			roiManager("Show None");
-			doCommand("Start Animation [\\]");
-			waitForUser("Verify the animated blob. The largest blob is kept in each time-frame.");
-			doCommand("Start Animation [\\]");
-		}
  		close(filename);
- 		close("C2-" + filename);
+ 		close("C" + GFP_CHANNEL + "-" + filename);
  		close(projected);
  		close("mask");
  		close("mask-largest");
